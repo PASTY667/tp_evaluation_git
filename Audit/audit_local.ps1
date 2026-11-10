@@ -23,6 +23,16 @@ param(
     [string] $CsvPath
 )
 
+$logDirectory = Join-Path -Path $PSScriptRoot -ChildPath 'logs'
+New-Item -ItemType Directory -Path $logDirectory -Force -ErrorAction Stop | Out-Null
+
+$logFileName = 'audit_local_{0}_{1}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'), $PID
+$logPath = Join-Path -Path $logDirectory -ChildPath $logFileName
+Start-Transcript -Path $logPath -ErrorAction Stop | Out-Null
+
+try {
+Write-Output "Journal d'exécution : $logPath"
+
 $requiredCommands = @(
     'Get-LocalUser',
     'Get-LocalGroup',
@@ -84,4 +94,8 @@ if ($CsvPath) {
 }
 else {
     $report | Format-List
+}
+}
+finally {
+    Stop-Transcript | Out-Null
 }
