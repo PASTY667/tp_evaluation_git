@@ -5,8 +5,9 @@
     Script d'audit système n'exigeant aucun privilège administrateur particulier.
     Compatible Windows PowerShell 5.1+ et PowerShell 7+.
 .NOTES
-    Auteur  : Étudiant 1
-    Projet  : Évaluation Git/GitHub - Systèmes & Réseaux
+    Auteur initial : Étudiant 1
+    Maintenance    : Étudiant 2 (Correction formatage disques - Issue #7)
+    Projet         : Évaluation Git/GitHub - Systèmes & Réseaux
 #>
 
 [CmdletBinding()]
@@ -43,9 +44,9 @@ try {
     $ramPercent = [math]::Round(($usedRamGB / $totalRamGB) * 100, 1)
 
     [PSCustomObject]@{
-        "Total (Go)"    = $totalRamGB
-        "Utilisé (Go)"  = $usedRamGB
-        "Libre (Go)"    = $freeRamGB
+        "Total (Go)"    = "{0:N2}" -f $totalRamGB
+        "Utilisé (Go)"  = "{0:N2}" -f $usedRamGB
+        "Libre (Go)"    = "{0:N2}" -f $freeRamGB
         "Utilisation %" = "$ramPercent %"
     } | Format-Table -AutoSize
 }
@@ -54,25 +55,41 @@ catch {
 }
 Write-Host ""
 
-# 3. Utilisation des Disques
+# 3. Utilisation des Disques (Section Corrigée)
 Write-Host "--- [3] OCCUPATION DES DISQUES LOCAUX ---" -ForegroundColor Yellow
 try {
     # DriveType = 3 correspond aux disques fixes locaux
-    Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType = 3" | ForEach-Object {
-        $totalGB = [math]::Round($_.Size / 1GB, 2)
-        $freeGB  = [math]::Round($_.FreeSpace / 1GB, 2)
-        $usedGB  = [math]::Round($totalGB - $freeGB, 2)
-        $pctUsed = if ($totalGB -gt 0) { [math]::Round(($usedGB / $totalGB) * 100, 1) } else { 0 }
+    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType = 3"
+    
+    $disksReport = foreach ($disk in $disks) {
+        $totalBytes = [double]$disk.Size
+        $freeBytes  = [double]$disk.FreeSpace
+        
+        if ($totalBytes -gt 0) {
+            $totalGB = [math]::Round($totalBytes / 1GB, 2)
+            $freeGB  = [math]::Round($freeBytes / 1GB, 2)
+            $usedGB  = [math]::Round($totalGB - $freeGB, 2)
+            $pctUsed = [math]::Round(($usedGB / $totalGB) * 100, 1)
+        } else {
+            $totalGB = 0.00
+            $freeGB  = 0.00
+            $usedGB  = 0.00
+            $pctUsed = 0.0
+        }
+
+        $volumeLabel = if ([string]::IsNullOrWhiteSpace($disk.VolumeName)) { "[Système / Sans nom]" } else { $disk.VolumeName }
 
         [PSCustomObject]@{
-            "Lecteur"       = $_.DeviceID
-            "Volume"        = $_.VolumeName
-            "Taille (Go)"   = $totalGB
-            "Utilisé (Go)"  = $usedGB
-            "Libre (Go)"    = $freeGB
-            "Utilisation %" = "$pctUsed %"
+            "Lecteur"       = $disk.DeviceID
+            "Nom Volume"    = $volumeLabel
+            "Total (Go)"    = "{0:N2}" -f $totalGB
+            "Utilisé (Go)"  = "{0:N2}" -f $usedGB
+            "Libre (Go)"    = "{0:N2}" -f $freeGB
+            "Occupation"    = "$pctUsed %"
         }
-    } | Format-Table -AutoSize
+    }
+    
+    $disksReport | Format-Table -AutoSize
 }
 catch {
     Write-Warning "Impossible de récupérer les métriques disques : $_"
