@@ -1,11 +1,9 @@
-# Controle des services - version avec un defaut volontaire.
-param(
+# Controle des services
     [string[]]$Services = @("Spooler", "wuauserv", "BITS")
 )
 
-# Le rapport est recree dans le dossier du script.
-$Rapport = Join-Path $PSScriptRoot "rapport_services.txt"
-
+# Le compte rendu est recree a chaque execution, a cote du script.
+$Rapport = Join-Path -Path $PSScriptRoot -ChildPath "rapport_services.txt"
 "Compte rendu du $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')" |
     Set-Content -LiteralPath $Rapport -Encoding UTF8 -ErrorAction Stop
 
@@ -20,11 +18,7 @@ foreach ($Nom in $Services) {
         continue
     }
 
-    # DEFAUT VOLONTAIRE : interrompt le script si le service est arrete.
-    if ($Service.Status -eq "Stopped") {
-        throw "Echec du controle : le service '$Nom' est arrete."
-    }
-
+    # Tous les etats sont consignes, y compris Stopped (arrete).
     $Ligne = "{0} ({1}) : {2}" -f $Service.Name, $Service.DisplayName, $Service.Status
     Write-Output $Ligne
     Add-Content -LiteralPath $Rapport -Value $Ligne -Encoding UTF8 -ErrorAction Stop

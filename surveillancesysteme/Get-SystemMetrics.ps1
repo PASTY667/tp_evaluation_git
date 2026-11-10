@@ -1,19 +1,27 @@
 <#
+<#
 .SYNOPSIS
-    Surveillance système : CPU, Mémoire (RAM) et Disques.
+    Surveillance système : CPU, mémoire (RAM) et disques.
 .DESCRIPTION
-    Script d'audit système n'exigeant aucun privilège administrateur particulier.
-    Compatible Windows PowerShell 5.1+ et PowerShell 7+.
+    Affiche une mesure ponctuelle de la charge CPU, de la mémoire
+    et de l'occupation des lecteurs fixes locaux.
+    Compatible Windows PowerShell 5.1 et PowerShell 7+ sous Windows.
+    Les calculs utilisent les valeurs brutes ; seul l'affichage est arrondi.
 .NOTES
     Auteur initial : Étudiant 1
-    Maintenance    : Étudiant 2 (Correction formatage disques - Issue #7)
+    Maintenance    : Étudiant 2
     Projet         : Évaluation Git/GitHub - Systèmes & Réseaux
 #>
 
+#Requires -Version 5.1
 [CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
+
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    throw "Ce script doit être exécuté sous Windows."
+}
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "          SURVEILLANCE SYSTÈME            " -ForegroundColor Cyan
@@ -22,77 +30,102 @@ Write-Host " Machine : $env:COMPUTERNAME"
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Utilisation du Processeur (CPU)
+# 1. Utilisation du processeur
 Write-Host "--- [1] UTILISATION DU PROCESSEUR ---" -ForegroundColor Yellow
 try {
-    $cpu = Get-CimInstance -ClassName Win32_Processor | Measure-Object -Property LoadPercentage -Average
-    $cpuUsage = [math]::Round($cpu.Average, 1)
-    Write-Host "Charge CPU globale : $cpuUsage %"
+    $cpu = Get-CimInstance -ClassName Win32_Processor |
+        Measure-Object -Property LoadPercentage -Average
+
+    if ($cpu.Count -eq 0 -or $null -eq $cpu.Average) {
+        throw "Aucune mesure de charge CPU disponible."
+    }
+
+    Write-Host ("Charge CPU moyenne : {0:N1} %" -f $cpu.Average)
 }
 catch {
-    Write-Warning "Impossible de récupérer les métriques CPU : $_"
+    Write-Warning "CPU indisponible : $($_.Exception.Message)"
 }
 Write-Host ""
 
-# 2. Utilisation de la Mémoire (RAM)
+# 2. Utilisation de la mémoire
 Write-Host "--- [2] UTILISATION DE LA MÉMOIRE (RAM) ---" -ForegroundColor Yellow
 try {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
-    $totalRamGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
-    $freeRamGB  = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
-    $usedRamGB  = [math]::Round($totalRamGB - $freeRamGB, 2)
-    $ramPercent = [math]::Round(($usedRamGB / $totalRamGB) * 100, 1)
+
+    if ($null -eq $os.TotalVisibleMemorySize -or $null -eq $os.FreePhysicalMemory) {
+        throw "Mesures mémoire absentes."
+    }
+
+    # Ces propriétés sont exprimées en Kio.
+    $totalRamKB = [double]$os.TotalVisibleMemorySize
+    $freeRamKB  = [double]$os.FreePhysicalMemory
+
+    if ($totalRamKB -le 0 -or $freeRamKB -lt 0 -or $freeRamKB -gt $totalRamKB) {
+        throw "Valeurs mémoire incohérentes."
+    }
+
+    $usedRamKB = $totalRamKB - $freeRamKB
 
     [PSCustomObject]@{
-        "Total (Go)"    = "{0:N2}" -f $totalRamGB
-        "Utilisé (Go)"  = "{0:N2}" -f $usedRamGB
-        "Libre (Go)"    = "{0:N2}" -f $freeRamGB
-        "Utilisation %" = "$ramPercent %"
-    } | Format-Table -AutoSize
+        "Total (Gio)"   = "{0:N2}" -f ($totalRamKB / 1MB)
+        "Utilisé (Gio)" = "{0:N2}" -f ($usedRamKB / 1MB)
+        "Libre (Gio)"   = "{0:N2}" -f ($freeRamKB / 1MB)
+        "Utilisation"  = "{0:N1} %" -f ($usedRamKB / $totalRamKB * 100)
+    } | Format-Table -AutoSize | Out-Host
 }
 catch {
-    Write-Warning "Impossible de récupérer les métriques mémoire : $_"
+    Write-Warning "Mémoire indisponible : $($_.Exception.Message)"
 }
 Write-Host ""
 
-# 3. Utilisation des Disques (Section Corrigée)
+# 3. Occupation des lecteurs fixes locaux
 Write-Host "--- [3] OCCUPATION DES DISQUES LOCAUX ---" -ForegroundColor Yellow
 try {
-    # DriveType = 3 correspond aux disques fixes locaux
-    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType = 3"
-    
-    $disksReport = foreach ($disk in $disks) {
-        $totalBytes = [double]$disk.Size
-        $freeBytes  = [double]$disk.FreeSpace
-        
-        if ($totalBytes -gt 0) {
-            $totalGB = [math]::Round($totalBytes / 1GB, 2)
-            $freeGB  = [math]::Round($freeBytes / 1GB, 2)
-            $usedGB  = [math]::Round($totalGB - $freeGB, 2)
-            $pctUsed = [math]::Round(($usedGB / $totalGB) * 100, 1)
-        } else {
-            $totalGB = 0.00
-            $freeGB  = 0.00
-            $usedGB  = 0.00
-            $pctUsed = 0.0
-        }
+    $disks = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType = 3")
 
-        $volumeLabel = if ([string]::IsNullOrWhiteSpace($disk.VolumeName)) { "[Système / Sans nom]" } else { $disk.VolumeName }
-
-        [PSCustomObject]@{
-            "Lecteur"       = $disk.DeviceID
-            "Nom Volume"    = $volumeLabel
-            "Total (Go)"    = "{0:N2}" -f $totalGB
-            "Utilisé (Go)"  = "{0:N2}" -f $usedGB
-            "Libre (Go)"    = "{0:N2}" -f $freeGB
-            "Occupation"    = "$pctUsed %"
-        }
+    if ($disks.Count -eq 0) {
+        Write-Host "Aucun lecteur fixe local détecté."
     }
-    
-    $disksReport | Format-Table -AutoSize
+    else {
+        $disksReport = foreach ($disk in $disks) {
+            $volumeLabel = if ([string]::IsNullOrWhiteSpace($disk.VolumeName)) {
+                "[Sans nom]"
+            }
+            else {
+                $disk.VolumeName
+            }
+
+            $row = [ordered]@{
+                "Lecteur"       = $disk.DeviceID
+                "Nom du volume" = $volumeLabel
+                "Total (Gio)"   = "Indisponible"
+                "Utilisé (Gio)" = "Indisponible"
+                "Libre (Gio)"   = "Indisponible"
+                "Occupation"    = "Indisponible"
+            }
+
+            if ($null -ne $disk.Size -and $null -ne $disk.FreeSpace) {
+                $totalBytes = [double]$disk.Size
+                $freeBytes  = [double]$disk.FreeSpace
+
+                if ($totalBytes -gt 0 -and $freeBytes -ge 0 -and $freeBytes -le $totalBytes) {
+                    $usedBytes = $totalBytes - $freeBytes
+
+                    $row["Total (Gio)"]   = "{0:N2}" -f ($totalBytes / 1GB)
+                    $row["Utilisé (Gio)"] = "{0:N2}" -f ($usedBytes / 1GB)
+                    $row["Libre (Gio)"]   = "{0:N2}" -f ($freeBytes / 1GB)
+                    $row["Occupation"]   = "{0:N1} %" -f ($usedBytes / $totalBytes * 100)
+                }
+            }
+
+            [PSCustomObject]$row
+        }
+
+        $disksReport | Format-Table -AutoSize | Out-Host
+    }
 }
 catch {
-    Write-Warning "Impossible de récupérer les métriques disques : $_"
+    Write-Warning "Disques indisponibles : $($_.Exception.Message)"
 }
 
 Write-Host "==========================================" -ForegroundColor Cyan
